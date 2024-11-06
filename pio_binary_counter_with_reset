@@ -1,0 +1,44 @@
+#########################################################################################
+# binary_counter_with_reset_110524.py   2 btns connected to 4 LED binary counter        #
+# green btn press increments the binary counter 0->15 wrapping to 0 from 15             #
+# red  btn press resets the 4 LED counter to 0                                          #
+# x reg: holds current state (0 or 1) of each of the two btns                           #
+# y reg: holds current count of binary display                                          #
+# if both reset and increment btns pressed simultaneously -> reset counter to zero      #
+#########################################################################################
+
+from machine import Pin
+from rp2 import asm_pio, PIO, StateMachine
+
+pin14 = Pin(14, Pin.IN, Pin.PULL_DOWN)  # green increment btn pin
+pin15 = Pin(15, Pin.IN, Pin.PULL_DOWN)  # red reset btn pin
+
+@asm_pio(out_init = (PIO.OUT_LOW,)*4, out_shiftdir = PIO.SHIFT_RIGHT)
+def btn_pio():
+    label('reset')
+    set(y, 0)           # initialize binary led counter in y=0
+    label('update_LEDs')
+    mov(pins, y)        # current counter sent to LEDs
+    label('btn_input')  # get btn input
+    mov(isr, null)      # clear isr of old btn readings 
+    in_(pins, 2)        # get both btn states; debounced in line 31
+    mov(x, isr)         # Most significant bit (MSB): red reset btn state; Least significant bit (LSB) green increment btn state
+    jmp(not_x, 'btn_input')   # wait for btn input
+    mov(osr, y)      # save current counter since at least one of two btns was pressed
+    set(y, 0b01)     # test for green pin14 press, increment btn
+    jmp(x_not_y,'chk_reset') # if True, reset btn probably pressed or both btns pressed, otherwise increment btn pressed
+    mov(y, osr)      # restore counter to y, then increment count in y
+    wait(0, pin,0)     # increment pin was pressed; wait for increment pin to be released  
+    mov(y, invert(y))  # increment_counter, y 
+    jmp(y_dec, 'next') # to increment y: invert(y)-> decrement(y)-> invert(y)
+    label('next')
+    mov(y, invert(y))  # completed increment of counter
+    jmp('update_LEDs')
+    label('chk_reset')  # see if reset btn pressed or both btns pressed
+    mov(osr, y)         # save current counter
+    set(y, 0b10)        #  red reset btn
+    jmp(x_not_y, 'reset')  # both btns pressed simultaneously, just reset counter
+    jmp('reset')           # reset counter to 0
+    
+sm0 = StateMachine(0, btn_pio, freq = 2000, out_base = Pin(0), in_base = pin14)
+sm0.active(1)
